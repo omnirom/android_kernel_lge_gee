@@ -990,7 +990,7 @@ static struct wcd9xxx_pdata apq8064_tabla20_platform_data = {
 	.micbias = {
 		.ldoh_v = TABLA_LDOH_2P85_V,
 		.cfilt1_mv = 1800,
-		.cfilt2_mv = 1800,
+		.cfilt2_mv = 2700,
 		.cfilt3_mv = 1800,
 		.bias1_cfilt_sel = TABLA_CFILT1_SEL,
 		.bias2_cfilt_sel = TABLA_CFILT2_SEL,
@@ -2113,7 +2113,7 @@ static void __init apq8064_mako_init(void)
 	apq8064_init_misc();
 }
 
-MACHINE_START(APQ8064_MAKO, "QCT APQ8064 MAKO")
+MACHINE_START(APQ8064_MAKO, "QCT APQ8064 GEEB")
 	.map_io = apq8064_map_io,
 	.reserve = apq8064_reserve,
 	.init_irq = apq8064_init_irq,
