@@ -1018,9 +1018,11 @@ static int context_struct_to_string(struct context *context, char **scontext, u3
 
 	if (context->len) {
 		*scontext_len = context->len;
-		*scontext = kstrdup(context->str, GFP_ATOMIC);
-		if (!(*scontext))
-			return -ENOMEM;
+		if (scontext) {
+			*scontext = kstrdup(context->str, GFP_ATOMIC);
+			if (!(*scontext))
+				return -ENOMEM;
+		}
 		return 0;
 	}
 
@@ -3022,8 +3024,7 @@ out:
 
 static int (*aurule_callback)(void) = audit_update_lsm_rules;
 
-static int aurule_avc_callback(u32 event, u32 ssid, u32 tsid,
-			       u16 class, u32 perms, u32 *retained)
+static int aurule_avc_callback(u32 event)
 {
 	int err = 0;
 
@@ -3036,8 +3037,7 @@ static int __init aurule_init(void)
 {
 	int err;
 
-	err = avc_add_callback(aurule_avc_callback, AVC_CALLBACK_RESET,
-			       SECSID_NULL, SECSID_NULL, SECCLASS_NULL, 0);
+	err = avc_add_callback(aurule_avc_callback, AVC_CALLBACK_RESET);
 	if (err)
 		panic("avc_add_callback() failed, error %d\n", err);
 
