@@ -26,12 +26,10 @@
 
 #include "cpufreq_governor.h"
 
-/* On-demand governor macors */
-#define DEF_FREQUENCY_DOWN_DIFFERENTIAL		(10)
+/* On-demand governor macros */
 #define DEF_FREQUENCY_UP_THRESHOLD		(80)
 #define DEF_SAMPLING_DOWN_FACTOR		(1)
 #define MAX_SAMPLING_DOWN_FACTOR		(100000)
-#define MICRO_FREQUENCY_DOWN_DIFFERENTIAL	(3)
 #define MICRO_FREQUENCY_UP_THRESHOLD		(95)
 #define MICRO_FREQUENCY_MIN_SAMPLE_RATE		(10000)
 #define MIN_FREQUENCY_UP_THRESHOLD		(11)
@@ -47,7 +45,6 @@ static struct cpufreq_governor cpufreq_gov_ondemand;
 static struct od_dbs_tuners od_tuners = {
 	.up_threshold = DEF_FREQUENCY_UP_THRESHOLD,
 	.sampling_down_factor = DEF_SAMPLING_DOWN_FACTOR,
-	.down_differential = DEF_FREQUENCY_DOWN_DIFFERENTIAL,
 	.ignore_nice = 0,
 	.powersave_bias = 0,
 };
@@ -65,7 +62,7 @@ static void ondemand_powersave_bias_init_cpu(int cpu)
  * efficient idling at a higher frequency/voltage is.
  * Pavel Machek says this is not so for various generations of AMD and old
  * Intel systems.
- * Mike Chan (androidlcom) calis this is also not true for ARM.
+ * Mike Chan (android.com) claims this is also not true for ARM.
  * Because of this, whitelist specific known (series) of CPUs by default, and
  * leave all others up to the user.
  */
@@ -73,7 +70,7 @@ static int should_io_be_busy(void)
 {
 #if defined(CONFIG_X86)
 	/*
-	 * For Intel, Core 2 (model 15) andl later have an efficient idle.
+	 * For Intel, Core 2 (model 15) and later have an efficient idle.
 	 */
 	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL &&
 			boot_cpu_data.x86 == 6 &&
@@ -158,14 +155,10 @@ static void dbs_freq_increase(struct cpufreq_policy *p, unsigned int freq)
 
 /*
  * Every sampling_rate, we check, if current idle time is less than 20%
- * (default), then we try to increase frequency Every sampling_rate, we look for
- * a the lowest frequency which can sustain the load while keeping idle time
- * over 30%. If such a frequency exist, we try to decrease to this frequency.
- *
- * Any frequency increase takes it to the maximum frequency. Frequency reduction
- * happens at minimum steps of 5% (default) of current frequency
+ * (default), then we try to increase frequency. Else, we adjust the frequency
+ * proportional to load.
  */
-static void od_check_cpu(int cpu, unsigned int load_freq)
+static void od_check_cpu(int cpu, unsigned int load)
 {
 	struct od_cpu_dbs_info_s *dbs_info = &per_cpu(od_cpu_dbs_info, cpu);
 	struct cpufreq_policy *policy = dbs_info->cdbs.cur_policy;
@@ -173,30 +166,16 @@ static void od_check_cpu(int cpu, unsigned int load_freq)
 	dbs_info->freq_lo = 0;
 
 	/* Check for frequency increase */
-	if (load_freq > od_tuners.up_threshold * policy->cur) {
+	if (load > od_tuners.up_threshold) {
 		/* If switching to max speed, apply sampling_down_factor */
 		if (policy->cur < policy->max)
 			dbs_info->rate_mult =
 				od_tuners.sampling_down_factor;
 		dbs_freq_increase(policy, policy->max);
-		return;
-	}
-
-	/* Check for frequency decrease */
-	/* if we cannot reduce the frequency anymore, break out early */
-	if (policy->cur == policy->min)
-		return;
-
-	/*
-	 * The optimal frequency is the frequency that is the lowest that can
-	 * support the current CPU usage without triggering the up policy. To be
-	 * safe, we focus 10 points under the threshold.
-	 */
-	if (load_freq < (od_tuners.up_threshold - od_tuners.down_differential) *
-			policy->cur) {
+	} else {
+		/* Calculate the next frequency proportional to load */
 		unsigned int freq_next;
-		freq_next = load_freq / (od_tuners.up_threshold -
-				od_tuners.down_differential);
+		freq_next = load * policy->cpuinfo.max_freq / 100;
 
 		/* No longer fully busy, reset rate_mult */
 		dbs_info->rate_mult = 1;
@@ -216,74 +195,44 @@ static void od_check_cpu(int cpu, unsigned int load_freq)
 	}
 }
 
-static void od_timer_update(struct od_cpu_dbs_info_s *dbs_info, bool sample,
-			    struct delayed_work *dw)
-{
-	unsigned int cpu = dbs_info->cdbs.cpu;
-	int delay, sample_type = dbs_info->sample_type;
-
-	/* Common NORMAL_SAMPLE setup */
-	dbs_info->sample_type = OD_NORMAL_SAMPLE;
-	if (sample_type == OD_SUB_SAMPLE) {
-		delay = dbs_info->freq_lo_jiffies;
-		if (sample)
-			__cpufreq_driver_target(dbs_info->cdbs.cur_policy,
-						dbs_info->freq_lo,
-						CPUFREQ_RELATION_H);
-	} else {
-		if (sample)
-			dbs_check_cpu(&od_dbs_data, cpu);
-		if (dbs_info->freq_lo) {
-			/* Setup timer for SUB_SAMPLE */
-			dbs_info->sample_type = OD_SUB_SAMPLE;
-			delay = dbs_info->freq_hi_jiffies;
-		} else {
-			delay = delay_for_sampling_rate(od_tuners.sampling_rate
-						* dbs_info->rate_mult);
-		}
-	}
-
-	schedule_delayed_work_on(smp_processor_id(), dw, delay);
-}
-
-static void od_timer_coordinated(struct od_cpu_dbs_info_s *dbs_info_local,
-				 struct delayed_work *dw)
-{
-	struct od_cpu_dbs_info_s *dbs_info;
-	ktime_t time_now;
-	s64 delta_us;
-	bool sample = true;
-
-	/* use leader CPU's dbs_info */
-	dbs_info = &per_cpu(od_cpu_dbs_info, dbs_info_local->cdbs.cpu);
-	mutex_lock(&dbs_info->cdbs.timer_mutex);
-
-	time_now = ktime_get();
-	delta_us = ktime_us_delta(time_now, dbs_info->cdbs.time_stamp);
-
-	/* Do nothing if we recently have sampled */
-	if (delta_us < (s64)(od_tuners.sampling_rate / 2))
-		sample = false;
-	else
-		dbs_info->cdbs.time_stamp = time_now;
-
-	od_timer_update(dbs_info, sample, dw);
-	mutex_unlock(&dbs_info->cdbs.timer_mutex);
-}
-
 static void od_dbs_timer(struct work_struct *work)
 {
 	struct delayed_work *dw = to_delayed_work(work);
 	struct od_cpu_dbs_info_s *dbs_info =
 		container_of(work, struct od_cpu_dbs_info_s, cdbs.work.work);
+	unsigned int cpu = dbs_info->cdbs.cur_policy->cpu;
+	struct od_cpu_dbs_info_s *core_dbs_info = &per_cpu(od_cpu_dbs_info,
+			cpu);
+	int delay, sample_type = core_dbs_info->sample_type;
+	bool eval_load;
 
-	if (dbs_sw_coordinated_cpus(&dbs_info->cdbs)) {
-		od_timer_coordinated(dbs_info, dw);
+	mutex_lock(&core_dbs_info->cdbs.timer_mutex);
+	eval_load = need_load_eval(&core_dbs_info->cdbs,
+			od_tuners.sampling_rate);
+
+	/* Common NORMAL_SAMPLE setup */
+	core_dbs_info->sample_type = OD_NORMAL_SAMPLE;
+	if (sample_type == OD_SUB_SAMPLE) {
+		delay = core_dbs_info->freq_lo_jiffies;
+		if (eval_load)
+			__cpufreq_driver_target(core_dbs_info->cdbs.cur_policy,
+						core_dbs_info->freq_lo,
+						CPUFREQ_RELATION_H);
 	} else {
-		mutex_lock(&dbs_info->cdbs.timer_mutex);
-		od_timer_update(dbs_info, true, dw);
-		mutex_unlock(&dbs_info->cdbs.timer_mutex);
+		if (eval_load)
+			dbs_check_cpu(&od_dbs_data, cpu);
+		if (core_dbs_info->freq_lo) {
+			/* Setup timer for SUB_SAMPLE */
+			core_dbs_info->sample_type = OD_SUB_SAMPLE;
+			delay = core_dbs_info->freq_hi_jiffies;
+		} else {
+			delay = delay_for_sampling_rate(od_tuners.sampling_rate
+						* core_dbs_info->rate_mult);
+		}
 	}
+
+	schedule_delayed_work_on(smp_processor_id(), dw, delay);
+	mutex_unlock(&core_dbs_info->cdbs.timer_mutex);
 }
 
 /************************** sysfs interface ************************/
@@ -298,7 +247,7 @@ static ssize_t show_sampling_rate_min(struct kobject *kobj,
  * update_sampling_rate - update sampling rate effective immediately if needed.
  * @new_rate: new sampling rate
  *
- * If new rate is smaller than the old, simply updaing
+ * If new rate is smaller than the old, simply updating
  * dbs_tuners_int.sampling_rate might not be appropriate. For example, if the
  * original sampling_rate was 1 second and the requested new sampling rate is 10
  * ms because the user needs immediate reaction from ondemand governor, but not
@@ -389,6 +338,7 @@ static ssize_t store_up_threshold(struct kobject *a, struct attribute *b,
 			input < MIN_FREQUENCY_UP_THRESHOLD) {
 		return -EINVAL;
 	}
+
 	od_tuners.up_threshold = input;
 	return count;
 }
@@ -545,7 +495,6 @@ static int __init cpufreq_gov_dbs_init(void)
 	if (idle_time != -1ULL) {
 		/* Idle micro accounting is supported. Use finer thresholds */
 		od_tuners.up_threshold = MICRO_FREQUENCY_UP_THRESHOLD;
-		od_tuners.down_differential = MICRO_FREQUENCY_DOWN_DIFFERENTIAL;
 		/*
 		 * In nohz/micro accounting case we set the minimum frequency
 		 * not depending on HZ, but fixed (very low). The deferred

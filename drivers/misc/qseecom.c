@@ -280,7 +280,7 @@ static int __qseecom_set_sb_memory(struct qseecom_registered_listener_list *svc,
 	/* Get the handle of the shared fd */
 	svc->ihandle = ion_import_dma_buf(qseecom.ion_clnt,
 					listener->ifd_data_fd);
-	if (svc->ihandle == NULL) {
+	if (IS_ERR_OR_NULL(svc->ihandle)) {
 		pr_err("Ion client could not retrieve the handle\n");
 		return -ENOMEM;
 	}
@@ -599,6 +599,7 @@ static int qseecom_load_app(struct qseecom_dev_handle *data, void __user *argp)
 	if (ret)
 		pr_warning("Unable to vote for SFPB clock");
 	req.qsee_cmd_id = QSEOS_APP_LOOKUP_COMMAND;
+	load_img_req.img_name[MAX_APP_NAME_SIZE-1] = '\0';
 	memcpy(req.app_name, load_img_req.img_name, MAX_APP_NAME_SIZE);
 
 	ret = __qseecom_check_app_exists(req);
@@ -982,8 +983,6 @@ static int qseecom_send_modfd_cmd(struct qseecom_dev_handle *data,
 	if (ret)
 		return ret;
 
-	pr_debug("sending cmd_req->rsp size: %u, ptr: 0x%p\n",
-			req.resp_len, req.resp_buf);
 	return ret;
 }
 
@@ -1399,8 +1398,6 @@ int qseecom_send_command(struct qseecom_handle *handle, void *send_buf,
 	if (ret)
 		return ret;
 
-	pr_debug("sending cmd_req->rsp size: %u, ptr: 0x%p\n",
-			req.resp_len, req.resp_buf);
 	return ret;
 }
 EXPORT_SYMBOL(qseecom_send_command);
@@ -1728,6 +1725,7 @@ static int qseecom_query_app_loaded(struct qseecom_dev_handle *data,
 	}
 
 	req.qsee_cmd_id = QSEOS_APP_LOOKUP_COMMAND;
+	query_req.app_name[MAX_APP_NAME_SIZE-1] = '\0';
 	memcpy(req.app_name, query_req.app_name, MAX_APP_NAME_SIZE);
 
 	ret = __qseecom_check_app_exists(req);

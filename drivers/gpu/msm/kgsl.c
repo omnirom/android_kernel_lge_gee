@@ -1019,7 +1019,7 @@ int kgsl_open_device(struct kgsl_device *device)
 		if (result)
 			goto err;
 
-		result = device->ftbl->start(device);
+		result = device->ftbl->start(device, 0);
 		if (result)
 			goto err;
 		/*
@@ -3646,7 +3646,7 @@ err_put:
 static inline bool
 mmap_range_valid(unsigned long addr, unsigned long len)
 {
-	return (addr + len) > addr && (addr + len) < TASK_SIZE;
+	return ((ULONG_MAX - addr) > len) && ((addr + len) < TASK_SIZE);
 }
 
 static unsigned long
@@ -4138,7 +4138,7 @@ int kgsl_postmortem_dump(struct kgsl_device *device, int manual)
 	del_timer_sync(&device->idle_timer);
 
 	/* Force on the clocks */
-	kgsl_pwrctrl_wake(device);
+	kgsl_pwrctrl_wake(device, 0);
 
 	/* Disable the irq */
 	kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_OFF);

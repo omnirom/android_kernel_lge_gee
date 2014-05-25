@@ -493,7 +493,7 @@ static int tcp_v6_send_synack(struct sock *sk, struct request_sock *req,
 	fl6.saddr = treq->loc_addr;
 	fl6.flowlabel = 0;
 	fl6.flowi6_oif = treq->iif;
-	fl6.flowi6_mark = sk->sk_mark;
+	fl6.flowi6_mark = inet_rsk(req)->ir_mark;
 	fl6.fl6_dport = inet_rsk(req)->rmt_port;
 	fl6.fl6_sport = inet_rsk(req)->loc_port;
 	security_req_classify_flow(req, flowi6_to_flowi(&fl6));
@@ -898,6 +898,7 @@ static void tcp_v6_send_response(struct sk_buff *skb, u32 seq, u32 ack, u32 win,
 	fl6.flowi6_proto = IPPROTO_TCP;
 	if (ipv6_addr_type(&fl6.daddr) & IPV6_ADDR_LINKLOCAL)
 		fl6.flowi6_oif = inet6_iif(skb);
+	fl6.flowi6_mark = IP6_REPLY_MARK(net, skb->mark);
 	fl6.fl6_dport = t1->dest;
 	fl6.fl6_sport = t1->source;
 	security_skb_classify_flow(skb, flowi6_to_flowi(&fl6));
@@ -1144,6 +1145,7 @@ static int tcp_v6_conn_request(struct sock *sk, struct sk_buff *skb)
 		TCP_ECN_create_request(req, tcp_hdr(skb));
 
 	treq->iif = sk->sk_bound_dev_if;
+	inet_rsk(req)->ir_mark = inet_request_mark(sk, skb);
 
 	/* So that link locals have meaning */
 	if (!sk->sk_bound_dev_if &&
@@ -1835,63 +1837,14 @@ static const struct tcp_sock_af_ops tcp_sock_ipv6_mapped_specific = {
 static int tcp_v6_init_sock(struct sock *sk)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
-	struct tcp_sock *tp = tcp_sk(sk);
 
-	skb_queue_head_init(&tp->out_of_order_queue);
-	tcp_init_xmit_timers(sk);
-	tcp_prequeue_init(tp);
-
-	icsk->icsk_rto = TCP_TIMEOUT_INIT;
-	tp->mdev = TCP_TIMEOUT_INIT;
-
-	/* So many TCP implementations out there (incorrectly) count the
-	 * initial SYN frame in their delayed-ACK and congestion control
-	 * algorithms that we must have the following bandaid to talk
-	 * efficiently to them.  -DaveM
-	 */
-	tp->snd_cwnd = 2;
-
-	/* See draft-stevens-tcpca-spec-01 for discussion of the
-	 * initialization of these values.
-	 */
-	tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
-	tp->snd_cwnd_clamp = ~0;
-	tp->mss_cache = TCP_MSS_DEFAULT;
-
-	tp->reordering = sysctl_tcp_reordering;
-
-	sk->sk_state = TCP_CLOSE;
+	tcp_init_sock(sk);
 
 	icsk->icsk_af_ops = &ipv6_specific;
-	icsk->icsk_ca_ops = &tcp_init_congestion_ops;
-	icsk->icsk_sync_mss = tcp_sync_mss;
-	sk->sk_write_space = sk_stream_write_space;
-	sock_set_flag(sk, SOCK_USE_WRITE_QUEUE);
 
 #ifdef CONFIG_TCP_MD5SIG
-	tp->af_specific = &tcp_sock_ipv6_specific;
+	tcp_sk(sk)->af_specific = &tcp_sock_ipv6_specific;
 #endif
-
-	/* TCP Cookie Transactions */
-	if (sysctl_tcp_cookie_size > 0) {
-		/* Default, cookies without s_data_payload. */
-		tp->cookie_values =
-			kzalloc(sizeof(*tp->cookie_values),
-				sk->sk_allocation);
-		if (tp->cookie_values != NULL)
-			kref_init(&tp->cookie_values->kref);
-	}
-	/* Presumed zeroed, in order of appearance:
-	 *	cookie_in_always, cookie_out_never,
-	 *	s_data_constant, s_data_in, s_data_out
-	 */
-	sk->sk_sndbuf = sysctl_tcp_wmem[1];
-	sk->sk_rcvbuf = sysctl_tcp_rmem[1];
-
-	local_bh_disable();
-	sock_update_memcg(sk);
-	sk_sockets_allocated_inc(sk);
-	local_bh_enable();
 
 	return 0;
 }
@@ -2107,6 +2060,7 @@ struct proto tcpv6_prot = {
 	.sendmsg		= tcp_sendmsg,
 	.sendpage		= tcp_sendpage,
 	.backlog_rcv		= tcp_v6_do_rcv,
+	.release_cb		= tcp_release_cb,
 	.hash			= tcp_v6_hash,
 	.unhash			= inet_unhash,
 	.get_port		= inet_csk_get_port,

@@ -616,6 +616,13 @@ static struct ctl_table ipv4_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
 	},
+	{
+		.procname	= "tcp_limit_output_bytes",
+		.data		= &sysctl_tcp_limit_output_bytes,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
 #ifdef CONFIG_NET_DMA
 	{
 		.procname	= "tcp_dma_copybreak",
@@ -797,6 +804,20 @@ static struct ctl_table ipv4_net_table[] = {
 		.maxlen		= sizeof(init_net.ipv4.sysctl_tcp_mem),
 		.mode		= 0644,
 		.proc_handler	= ipv4_tcp_mem,
+	},
+	{
+		.procname	= "fwmark_reflect",
+		.data		= &init_net.ipv4.sysctl_fwmark_reflect,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "tcp_fwmark_accept",
+		.data		= &init_net.ipv4.sysctl_tcp_fwmark_accept,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
 	},
 	{ }
 };
